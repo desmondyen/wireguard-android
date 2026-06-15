@@ -1,129 +1,218 @@
-/*
- * Copyright © 2017-2025 WireGuard LLC. All Rights Reserved.
- * SPDX-License-Identifier: Apache-2.0
- */
 package com.wireguard.android.activity
 
-import android.content.Intent
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.addCallback
-import androidx.appcompat.app.ActionBar
-import androidx.fragment.app.FragmentManager
-import androidx.fragment.app.FragmentTransaction
-import androidx.fragment.app.commit
-import com.wireguard.android.R
-import com.wireguard.android.fragment.TunnelDetailFragment
-import com.wireguard.android.fragment.TunnelEditorFragment
-import com.wireguard.android.model.ObservableTunnel
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.wireguard.android.Application
+import com.wireguard.android.backend.Tunnel
+import com.wireguard.config.Config
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.BufferedReader
+import java.io.StringReader
 
-/**
- * CRUD interface for WireGuard tunnels. This activity serves as the main entry point to the
- * WireGuard application, and contains several fragments for listing, viewing details of, and
- * editing the configuration and interface state of WireGuard tunnels.
- */
-class MainActivity : BaseActivity(), FragmentManager.OnBackStackChangedListener {
-    private var actionBar: ActionBar? = null
-    private var isTwoPaneLayout = false
-    private var backPressedCallback: OnBackPressedCallback? = null
+// 🌟 继承官方原本的 Activity，享受 100% 不闪退的系统初始化环境
+class MainActivity : AppCompatActivity() {
 
-    private fun handleBackPressed() {
-        val backStackEntries = supportFragmentManager.backStackEntryCount
-        // If the two-pane layout does not have an editor open, going back should exit the app.
-        if (isTwoPaneLayout && backStackEntries <= 1) {
-            finish()
-            return
-        }
-
-        if (backStackEntries >= 1)
-            supportFragmentManager.popBackStack()
-
-        // Deselect the current tunnel on navigating back from the detail pane to the one-pane list.
-        if (backStackEntries == 1)
-            selectedTunnel = null
-    }
-
-    override fun onBackStackChanged() {
-        val backStackEntries = supportFragmentManager.backStackEntryCount
-        backPressedCallback?.isEnabled = backStackEntries >= 1
-        if (actionBar == null) return
-        // Do not show the home menu when the two-pane layout is at the detail view (see above).
-        val minBackStackEntries = if (isTwoPaneLayout) 2 else 1
-        actionBar!!.setDisplayHomeAsUpEnabled(backStackEntries >= minBackStackEntries)
-    }
+    private val httpClient = OkHttpClient()
+    private var guardJob: kotlinx.coroutines.Job? = null
+    private var activationDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.main_activity)
-        actionBar = supportActionBar
-        isTwoPaneLayout = findViewById<View?>(R.id.master_detail_wrapper) != null
-        supportFragmentManager.addOnBackStackChangedListener(this)
-        backPressedCallback = onBackPressedDispatcher.addCallback(this) { handleBackPressed() }
-        onBackStackChanged()
+        
+        // 1. 先让官方原本的布局正常渲染加载（底层机制完美通过检查，稳如老狗）
+        val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
+        if (layoutId != 0) setContentView(layoutId)
+
+        // 2. 0.001秒后强力介入：立刻弹出无法关闭的商业级全屏激活拦截弹窗
+        showActivationLockDialog()
     }
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_activity, menu)
-        return true
-    }
+    private fun showActivationLockDialog() {
+        val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        
+        // 动态铺设极其硬核的暗黑安防 UI 交互卡片
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
+            setPadding(80, 80, 80, 80)
+        }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> {
-                // The back arrow in the action bar should act the same as the back button.
-                onBackPressedDispatcher.onBackPressed()
-                true
+        val titleTv = TextView(this).apply {
+            text = "🛰️ 核心高强加密网络网关"
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 22f
+            paint.isFakeBoldText = true
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, 20)
+        }
+
+        val subTv = TextView(this).apply {
+            text = "此设备网络处于强力规管管控状态\n请粘贴管理员发给您的 12 位专属授权激活码"
+            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, 80)
+        }
+
+        val etCode = EditText(this).apply {
+            hint = "请输入12位安全激活码 (Token)"
+            setHintTextColor(android.graphics.Color.GRAY)
+            setTextColor(android.graphics.Color.parseColor("#38BDF8"))
+            textSize = 16f
+            gravity = android.view.Gravity.CENTER
+            maxLines = 1
+            setBackgroundColor(android.graphics.Color.parseColor("#1E293B"))
+            setPadding(30, 40, 30, 40)
+        }
+
+        val btnActive = Button(this).apply {
+            text = "🚀 一键打通高强安防隧道"
+            setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 16f
+            paint.isFakeBoldText = true
+        }
+
+        container.addView(titleTv)
+        container.addView(subTv)
+        container.addView(etCode)
+        
+        val space = View(this).apply { minimumHeight = 40 }
+        container.addView(space)
+        container.addView(btnActive)
+
+        builder.setView(container)
+        builder.setCancelable(false) // 🌟 锁死弹窗：按返回键、点外面绝对无法关闭
+
+        activationDialog = builder.create()
+        activationDialog?.show()
+
+        btnActive.setOnClickListener {
+            val code = etCode.text.toString().trim()
+            if (code.length < 5) {
+                Toast.makeText(this, "请输入合规的授权激活码", Toast.LENGTH_SHORT).show()
+            } else {
+                executeCloudActivation(code)
             }
+        }
+    }
 
-            R.id.menu_action_edit -> {
-                supportFragmentManager.commit {
-                    replace(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, TunnelEditorFragment())
-                    setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-                    addToBackStack(null)
+    private fun executeCloudActivation(activationCode: String) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val jsonObject = JsonObject().apply {
+                    addProperty("activation_code", activationCode)
                 }
-                true
-            }
-            // This menu item is handled by the editor fragment.
-            R.id.menu_action_save -> false
-            R.id.menu_settings -> {
-                startActivity(Intent(this, SettingsActivity::class.java))
-                true
-            }
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = jsonObject.toString().toRequestBody(mediaType)
 
-            else -> super.onOptionsItemSelected(item)
+                val request = Request.Builder()
+                    .url("http://wx.8288.uk/api/v1/activate")
+                    .post(requestBody)
+                    .build()
+
+                val response = httpClient.newCall(request).execute()
+                val responseStr = response.body?.string()
+
+                if (response.isSuccessful && responseStr != null) {
+                    val rootJson = JsonParser.parseString(responseStr).asJsonObject
+                    if (rootJson.get("code").asInt == 200) {
+                        val dataObj = rootJson.getAsJsonObject("data")
+                        val wgConfigText = dataObj.get("config").asString
+
+                        withContext(Dispatchers.Main) {
+                            // 校验通过，在主线程打通物理隧道并解锁屏幕
+                            injectTunnelAndUnlock(wgConfigText, activationCode)
+                        }
+                    } else {
+                        showToast(rootJson.get("message").asString)
+                    }
+                } else {
+                    showToast("激活授权无对应资产，请重新向管理员索要")
+                }
+            } catch (e: Exception) {
+                showToast("连通网关失败，请检查手机网络: ${e.message}")
+            }
         }
     }
 
-    override fun onSelectedTunnelChanged(
-        oldTunnel: ObservableTunnel?,
-        newTunnel: ObservableTunnel?
-    ): Boolean {
-        val fragmentManager = supportFragmentManager
-        if (fragmentManager.isStateSaved) {
-            return false
-        }
+    private fun injectTunnelAndUnlock(configText: String, code: String) {
+        lifecycleScope.launch {
+            try {
+                val bufferedReader = BufferedReader(StringReader(configText))
+                val config = Config.parse(bufferedReader)
+                val tunnelManager = Application.getTunnelManager()
 
-        val backStackEntries = fragmentManager.backStackEntryCount
-        if (newTunnel == null) {
-            // Clear everything off the back stack (all editors and detail fragments).
-            fragmentManager.popBackStackImmediate(0, FragmentManager.POP_BACK_STACK_INCLUSIVE)
-            return true
-        }
-        if (backStackEntries == 2) {
-            // Pop the editor off the back stack to reveal the detail fragment. Use the immediate
-            // method to avoid the editor picking up the new tunnel while it is still visible.
-            fragmentManager.popBackStackImmediate()
-        } else if (backStackEntries == 0) {
-            // Create and show a new detail fragment.
-            fragmentManager.commit {
-                add(if (isTwoPaneLayout) R.id.detail_container else R.id.list_detail_container, TunnelDetailFragment())
-                setTransition(FragmentTransaction.TRANSIT_FRAGMENT_FADE)
-                addToBackStack(null)
+                // 构建物理隧道
+                val tunnel = tunnelManager.create("SecureTunnel", config)
+                // 瞬间拉起手机物理 VPN 开关
+                tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
+
+                Toast.makeText(this@MainActivity, "✨ 加密网络全线打通！安全守护已常驻", Toast.LENGTH_SHORT).show()
+
+                // 启动 30 秒断网熔断定时轮询
+                startDaemonPoll(code)
+
+                // 🌟 解锁：关闭拦截大弹窗，用户正式进入底层 VPN 管理世界
+                activationDialog?.dismiss()
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "隧道装载失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
-        return true
+    }
+
+    private fun startDaemonPoll(activationCode: String) {
+        guardJob?.cancel()
+        guardJob = lifecycleScope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(30000) // 30秒循环强制轮询
+                try {
+                    val runningTunnelNames = Application.getBackend().runningTunnelNames
+                    if (runningTunnelNames.contains("SecureTunnel")) {
+                        val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
+                        val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                        val request = Request.Builder().url("http://wx.8288.uk/api/v1/check_status").post(requestBody).build()
+                        val response = httpClient.newCall(request).execute()
+                        val responseStr = response.body?.string()
+
+                        if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
+                            withContext(Dispatchers.Main) {
+                                // 熔断：管理员删除了 Token，瞬间执行肉体注销，切断流量并重新全屏锁死
+                                Application.getBackend().setState({ "SecureTunnel" }, Tunnel.State.DOWN, null)
+                                val tm = Application.getTunnelManager()
+                                val target = tm.getTunnels().find { it.name == "SecureTunnel" }
+                                if (target != null) tm.delete(target)
+                                
+                                Toast.makeText(applicationContext, "⚠️ 您的授权已到期或被注销！", Toast.LENGTH_LONG).show()
+                                showActivationLockDialog()
+                            }
+                        }
+                    }
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+        }
+    }
+
+    private suspend fun showToast(msg: String) {
+        withContext(Dispatchers.Main) {
+            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+        }
     }
 }
