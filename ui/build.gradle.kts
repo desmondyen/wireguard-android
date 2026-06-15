@@ -31,7 +31,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles("proguard-android-optimize.txt")
+            proGuardFiles("proguard-android-optimize.txt")
             packaging {
                 resources {
                     excludes += "DebugProbesKt.bin"
@@ -76,6 +76,12 @@ dependencies {
     implementation(libs.zxing.android.embedded)
     implementation(libs.kotlinx.coroutines.android)
     coreLibraryDesugaring(libs.desugarJdkLibs)
+
+    // =====================================================================
+    // 🌟 新增：为 UI 主模块精准注入远程 API 请求和 JSON 解析所必须的底层依赖库
+    // =====================================================================
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.10.1")
 }
 
 tasks.withType<JavaCompile>().configureEach {
