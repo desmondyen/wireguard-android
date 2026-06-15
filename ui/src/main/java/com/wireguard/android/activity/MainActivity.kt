@@ -30,6 +30,10 @@ class MainActivity : AppCompatActivity() {
     private val httpClient = OkHttpClient()
     private var guardJob: kotlinx.coroutines.Job? = null
     private var activationDialog: AlertDialog? = null
+    
+    // 状态反馈文本指针
+    private lateinit var statusFeedbackTv: TextView
+    private lateinit var actionBtn: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +41,6 @@ class MainActivity : AppCompatActivity() {
         val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
         if (layoutId != 0) setContentView(layoutId)
 
-        // 强力全屏拦截
         showActivationLockDialog()
     }
 
@@ -65,7 +68,16 @@ class MainActivity : AppCompatActivity() {
             setTextColor(android.graphics.Color.parseColor("#94A3B8"))
             textSize = 14f
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, 80)
+            setPadding(0, 0, 0, 40)
+        }
+
+        // 🌟 可视化反馈：新增一个专门用来看状态或报错的文本框，文字默认为空
+        statusFeedbackTv = TextView(this).apply {
+            text = ""
+            setTextColor(android.graphics.Color.parseColor("#EF4444")) // 红色报错提示
+            textSize = 14f
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, 0, 0, 40)
         }
 
         val etCode = EditText(this).apply {
@@ -79,7 +91,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(30, 40, 30, 40)
         }
 
-        val btnActive = Button(this).apply {
+        actionBtn = Button(this).apply {
             text = "🚀 一键打通高强安防隧道"
             setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
             setTextColor(android.graphics.Color.WHITE)
@@ -89,11 +101,12 @@ class MainActivity : AppCompatActivity() {
 
         container.addView(titleTv)
         container.addView(subTv)
+        container.addView(statusFeedbackTv) // 挂载反馈栏
         container.addView(etCode)
         
         val space = View(this).apply { minimumHeight = 40 }
         container.addView(space)
-        container.addView(btnActive)
+        container.addView(actionBtn)
 
         builder.setView(container)
         builder.setCancelable(false)
@@ -101,11 +114,15 @@ class MainActivity : AppCompatActivity() {
         activationDialog = builder.create()
         activationDialog?.show()
 
-        btnActive.setOnClickListener {
+        actionBtn.setOnClickListener {
             val code = etCode.text.toString().trim()
             if (code.length < 5) {
-                Toast.makeText(this, "请输入合规的授权激活码", Toast.LENGTH_SHORT).show()
+                statusFeedbackTv.text = "❌ 激活码格式不正确"
             } else {
+                // 按钮立刻变灰，并显示正在连接，给用户绝对明显的视觉反馈！
+                actionBtn.isEnabled = false
+                actionBtn.text = "⏳ 正在拼命连接边缘网关..."
+                statusFeedbackTv.text = "🔄 正在向 https://wx.8288.uk 握手寻址..."
                 executeCloudActivation(code)
             }
         }
@@ -121,30 +138,38 @@ class MainActivity : AppCompatActivity() {
                 val requestBody = jsonObject.toString().toRequestBody(mediaType)
 
                 val request = Request.Builder()
-                    .url("http://wx.8288.uk/api/v1/activate")
+                    .url("https://wx.8288.uk/api/v1/activate")
                     .post(requestBody)
                     .build()
 
                 val response = httpClient.newCall(request).execute()
                 val responseStr = response.body?.string()
 
-                if (response.isSuccessful && responseStr != null) {
-                    val rootJson = JsonParser.parseString(responseStr).asJsonObject
-                    if (rootJson.get("code").asInt == 200) {
-                        val dataObj = rootJson.getAsJsonObject("data")
-                        val wgConfigText = dataObj.get("config").asString
+                withContext(Dispatchers.Main) {
+                    // 恢复按钮点击状态
+                    actionBtn.isEnabled = true
+                    actionBtn.text = "🚀 一键打通高强安防隧道"
 
-                        withContext(Dispatchers.Main) {
+                    if (response.isSuccessful && responseStr != null) {
+                        val rootJson = JsonParser.parseString(responseStr).asJsonObject
+                        if (rootJson.get("code").asInt == 200) {
+                            val dataObj = rootJson.getAsJsonObject("data")
+                            val wgConfigText = dataObj.get("config").asString
                             injectTunnelAndUnlock(wgConfigText, activationCode)
+                        } else {
+                            statusFeedbackTv.text = "服务端拒绝: " + rootJson.get("message").asString
                         }
                     } else {
-                        showToast(rootJson.get("message").asString)
+                        statusFeedbackTv.text = "网关拒绝，HTTP 状态码: ${response.code}"
                     }
-                } else {
-                    showToast("激活授权无对应资产，请重新向管理员索要")
                 }
             } catch (e: Exception) {
-                showToast("连通网关失败，请检查手机网络: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    actionBtn.isEnabled = true
+                    actionBtn.text = "🚀 一键打通高强安防隧道"
+                    // 🌟 终极核心：如果发生了任何证书链异常、网络掐断，直接在全屏屏幕中央红字打印出来！
+                    statusFeedbackTv.text = "底层网络阻断报错: ${e.message}"
+                }
             }
         }
     }
@@ -159,12 +184,10 @@ class MainActivity : AppCompatActivity() {
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
-                Toast.makeText(this@MainActivity, "✨ 加密网络全线打通！安全守护已常驻", Toast.LENGTH_SHORT).show()
-
                 startDaemonPoll(code)
                 activationDialog?.dismiss()
             } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "隧道装载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                statusFeedbackTv.text = "构建本地隧道失败: ${e.message}"
             }
         }
     }
@@ -181,29 +204,22 @@ class MainActivity : AppCompatActivity() {
                     if (target != null) {
                         val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
                         val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                        val request = Request.Builder().url("http://wx.8288.uk/api/v1/check_status").post(requestBody).build()
+                        
+                        val request = Request.Builder().url("https://wx.8288.uk/api/v1/check_status").post(requestBody).build()
                         val response = httpClient.newCall(request).execute()
                         val responseStr = response.body?.string()
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
-                                // 🌟 完美修复：直接传递 target 隧道实体，完美契合官方底层的 setState 安全规管限制
                                 Application.getBackend().setState(target, Tunnel.State.DOWN, null)
                                 tm.delete(target)
-                                
-                                Toast.makeText(applicationContext, "⚠️ 您的授权已到期或被注销！", Toast.LENGTH_LONG).show()
                                 showActivationLockDialog()
+                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被注销！"
                             }
                         }
                     }
                 } catch (e: Exception) { e.printStackTrace() }
             }
-        }
-    }
-
-    private suspend fun showToast(msg: String) {
-        withContext(Dispatchers.Main) {
-            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
         }
     }
 }
