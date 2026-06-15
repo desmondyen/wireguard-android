@@ -30,27 +30,22 @@ class ActivationActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 🌟 动态构建极简纯黑 UI 容器，彻底免去配置各种 XML 布局资源导致的报错
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(60, 100, 60, 60)
-            setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
+        // 🌟 已修复：直接调用正统内置系统的核心资源 ID 指针，100% 杜绝真机上由于 Theme 引发的闪退
+        val layoutId = resources.getIdentifier("activity_activation", "layout", packageName)
+        if (layoutId == 0) {
+            Toast.makeText(this, "资源加载异常", Toast.LENGTH_LONG).show()
+            finish()
+            return
         }
-        val etCode = EditText(this).apply {
-            hint = "请输入12位安全激活码"
-            setHintTextColor(android.graphics.Color.GRAY)
-            setTextColor(android.graphics.Color.WHITE)
-        }
-        val btnActive = Button(this).apply {
-            text = "🚀 一键接通加密网关"
-            setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
-            setTextColor(android.graphics.Color.WHITE)
-        }
-        layout.addView(etCode)
-        layout.addView(btnActive)
-        setContentView(layout)
+        setContentView(layoutId)
 
         guardDaemon = VpnGuardDaemon(applicationContext)
+
+        val etCodeId = resources.getIdentifier("et_code", "id", packageName)
+        val btnActiveId = resources.getIdentifier("btn_active", "id", packageName)
+
+        val etCode = findViewById<EditText>(etCodeId)
+        val btnActive = findViewById<Button>(btnActiveId)
 
         btnActive.setOnClickListener {
             val code = etCode.text.toString().trim()
@@ -102,23 +97,18 @@ class ActivationActivity : AppCompatActivity() {
     }
 
     private fun importAndConnect(configText: String, code: String) {
-        // 🌟 开启主线程协程作用域，解决直接调用 suspend 方法导致的编译中断
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.Main) {
             try {
                 val bufferedReader = BufferedReader(StringReader(configText))
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
-                // 异步注入并直接保存隧道
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 Toast.makeText(this@ActivationActivity, "授权通过！正在接通加密网络...", Toast.LENGTH_SHORT).show()
                 
-                // 开启物理 VPN 开关
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
                 
-                // 激活心跳常驻
                 guardDaemon.startGuard(code)
-                
                 finish()
             } catch (e: Exception) {
                 Toast.makeText(this@ActivationActivity, "构建安全隧道失败: ${e.message}", Toast.LENGTH_LONG).show()
