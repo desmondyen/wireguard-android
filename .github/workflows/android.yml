@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 🌟 核心：修改拉取代码步骤，加入 submodules: recursive，让云端服务器强制拉取底层 C/C++ 依赖文件
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
@@ -31,4 +30,11 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build APK with Gradle
-      run: ./gradlew assembleDebug
+      run: ./gradlew :ui:assembleDebug
+
+    # 🌟 新增核心步骤：告诉 GitHub 跑完后把生成的 APK 搜刮出来展示到网页上
+    - name: Upload Finished APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: wireguard-custom-apk
+        path: ui/build/outputs/apk/debug/*.apk
