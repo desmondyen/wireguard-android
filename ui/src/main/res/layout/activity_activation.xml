@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_match"
+    android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:gravity="center"
@@ -29,9 +29,9 @@
         android:layout_width="match_parent"
         android:layout_height="55dp"
         android:hint="粘贴激活码 (Token)"
-        android:setHintTextColor="#475569"
+        android:textColorHint="#475569"
         android:textColor="#38BDF8"
-        android:textSize="16dp"
+        android:textSize="16sp"
         android:gravity="center"
         android:maxLines="1"
         android:background="@android:drawable/editbox_background_normal"
@@ -43,7 +43,7 @@
         android:layout_height="55dp"
         android:text="🚀 一键接通高强隧道"
         android:textColor="#FFFFFF"
-        android:textSize="16dp"
+        android:textSize="16sp"
         android:textStyle="bold"
         android:backgroundTint="#2563EB" />
 </LinearLayout>
