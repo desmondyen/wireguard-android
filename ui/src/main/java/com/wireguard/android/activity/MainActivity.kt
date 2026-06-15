@@ -25,7 +25,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.io.StringReader
 
-// 🌟 继承官方原本的 Activity，享受 100% 不闪退的系统初始化环境
 class MainActivity : AppCompatActivity() {
 
     private val httpClient = OkHttpClient()
@@ -35,18 +34,16 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 1. 先让官方原本的布局正常渲染加载（底层机制完美通过检查，稳如老狗）
         val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
         if (layoutId != 0) setContentView(layoutId)
 
-        // 2. 0.001秒后强力介入：立刻弹出无法关闭的商业级全屏激活拦截弹窗
+        // 强力全屏拦截
         showActivationLockDialog()
     }
 
     private fun showActivationLockDialog() {
         val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         
-        // 动态铺设极其硬核的暗黑安防 UI 交互卡片
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
@@ -99,7 +96,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(btnActive)
 
         builder.setView(container)
-        builder.setCancelable(false) // 🌟 锁死弹窗：按返回键、点外面绝对无法关闭
+        builder.setCancelable(false)
 
         activationDialog = builder.create()
         activationDialog?.show()
@@ -138,7 +135,6 @@ class MainActivity : AppCompatActivity() {
                         val wgConfigText = dataObj.get("config").asString
 
                         withContext(Dispatchers.Main) {
-                            // 校验通过，在主线程打通物理隧道并解锁屏幕
                             injectTunnelAndUnlock(wgConfigText, activationCode)
                         }
                     } else {
@@ -160,17 +156,12 @@ class MainActivity : AppCompatActivity() {
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
-                // 构建物理隧道
                 val tunnel = tunnelManager.create("SecureTunnel", config)
-                // 瞬间拉起手机物理 VPN 开关
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
                 Toast.makeText(this@MainActivity, "✨ 加密网络全线打通！安全守护已常驻", Toast.LENGTH_SHORT).show()
 
-                // 启动 30 秒断网熔断定时轮询
                 startDaemonPoll(code)
-
-                // 🌟 解锁：关闭拦截大弹窗，用户正式进入底层 VPN 管理世界
                 activationDialog?.dismiss()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity, "隧道装载失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -182,10 +173,12 @@ class MainActivity : AppCompatActivity() {
         guardJob?.cancel()
         guardJob = lifecycleScope.launch(Dispatchers.IO) {
             while (true) {
-                kotlinx.coroutines.delay(30000) // 30秒循环强制轮询
+                kotlinx.coroutines.delay(30000)
                 try {
-                    val runningTunnelNames = Application.getBackend().runningTunnelNames
-                    if (runningTunnelNames.contains("SecureTunnel")) {
+                    val tm = Application.getTunnelManager()
+                    val target = tm.getTunnels().find { it.name == "SecureTunnel" }
+                    
+                    if (target != null) {
                         val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
                         val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                         val request = Request.Builder().url("http://wx.8288.uk/api/v1/check_status").post(requestBody).build()
@@ -194,11 +187,9 @@ class MainActivity : AppCompatActivity() {
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
-                                // 熔断：管理员删除了 Token，瞬间执行肉体注销，切断流量并重新全屏锁死
-                                Application.getBackend().setState({ "SecureTunnel" }, Tunnel.State.DOWN, null)
-                                val tm = Application.getTunnelManager()
-                                val target = tm.getTunnels().find { it.name == "SecureTunnel" }
-                                if (target != null) tm.delete(target)
+                                // 🌟 完美修复：直接传递 target 隧道实体，完美契合官方底层的 setState 安全规管限制
+                                Application.getBackend().setState(target, Tunnel.State.DOWN, null)
+                                tm.delete(target)
                                 
                                 Toast.makeText(applicationContext, "⚠️ 您的授权已到期或被注销！", Toast.LENGTH_LONG).show()
                                 showActivationLockDialog()
