@@ -38,16 +38,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // 1. 让官方原版的底层布局正常渲染加载，确保系统初始化不闪退
         val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
         if (layoutId != 0) setContentView(layoutId)
 
+        // 2. 瞬间切入全屏高强商业规管锁定弹窗
         showActivationLockDialog()
     }
 
     private fun showActivationLockDialog() {
         val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         
-        // 🌟 核心修复 1：最外层包裹一个标准的 ScrollView（滚动视图），确保键盘弹起时按钮永远不会被挤出屏幕外
+        // 🌟 防遮挡设计：最外层包裹滚动视图，键盘弹起时自动上推，确保按钮绝不丢失
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
@@ -76,6 +78,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 30)
         }
 
+        // 屏幕中央的可视化状态回显器
         statusFeedbackTv = TextView(this).apply {
             text = ""
             setTextColor(android.graphics.Color.parseColor("#EF4444"))
@@ -112,10 +115,9 @@ class MainActivity : AppCompatActivity() {
         container.addView(space)
         container.addView(actionBtn)
 
-        // 🌟 核心修复 2：将布局容器挂载到可滚动的 ScrollView 中
         scrollView.addView(container)
         builder.setView(scrollView)
-        builder.setCancelable(false)
+        builder.setCancelable(false) // 锁死强制拦截
 
         activationDialog = builder.create()
         activationDialog?.show()
@@ -125,7 +127,7 @@ class MainActivity : AppCompatActivity() {
             if (code.length < 5) {
                 statusFeedbackTv.text = "❌ 激活码格式不正确"
             } else {
-                // 🌟 核心修复 3：点击按钮时，强制系统自动收起手机软键盘，让路给状态回显
+                // 点击时强制收起键盘，防止遮挡回显
                 try {
                     val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                     imm.hideSoftInputFromWindow(etCode.windowToken, 0)
@@ -148,6 +150,7 @@ class MainActivity : AppCompatActivity() {
                 val mediaType = "application/json; charset=utf-8".toMediaType()
                 val requestBody = jsonObject.toString().toRequestBody(mediaType)
 
+                // 🌟 使用合规的安全 https 加密链路请求
                 val request = Request.Builder()
                     .url("https://wx.8288.uk/api/v1/activate")
                     .post(requestBody)
@@ -165,6 +168,8 @@ class MainActivity : AppCompatActivity() {
                         if (rootJson.get("code").asInt == 200) {
                             val dataObj = rootJson.getAsJsonObject("data")
                             val wgConfigText = dataObj.get("config").asString
+                            
+                            // 校验成功，执行本地装载
                             injectTunnelAndUnlock(wgConfigText, activationCode)
                         } else {
                             statusFeedbackTv.text = "服务端拒绝: " + rootJson.get("message").asString
@@ -190,10 +195,25 @@ class MainActivity : AppCompatActivity() {
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
+                // 🌟 核心去重清理：防止抛出“SecureTunnel已存在”的安卓底层冲突断言
+                val existingTunnels = tunnelManager.getTunnels()
+                val oldTunnel = existingTunnels.find { it.name == "SecureTunnel" }
+                if (oldTunnel != null) {
+                    try {
+                        Application.getBackend().setState(oldTunnel, Tunnel.State.DOWN, null)
+                        tunnelManager.delete(oldTunnel)
+                    } catch (e: Exception) {}
+                }
+
+                // 注入全新下发的网关配置
                 val tunnel = tunnelManager.create("SecureTunnel", config)
+                // 强制合上手机物理 VPN 开关
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
+                // 启动 30 秒断网守护心跳
                 startDaemonPoll(code)
+                
+                // 完美关闭拦截锁屏，允许用户使用
                 activationDialog?.dismiss()
             } catch (e: Exception) {
                 statusFeedbackTv.text = "构建本地隧道失败: ${e.message}"
@@ -205,7 +225,7 @@ class MainActivity : AppCompatActivity() {
         guardJob?.cancel()
         guardJob = lifecycleScope.launch(Dispatchers.IO) {
             while (true) {
-                kotlinx.coroutines.delay(30000)
+                kotlinx.coroutines.delay(30000) // 30秒无缝强管控
                 try {
                     val tm = Application.getTunnelManager()
                     val target = tm.getTunnels().find { it.name == "SecureTunnel" }
@@ -220,10 +240,11 @@ class MainActivity : AppCompatActivity() {
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
+                                // 💥 热熔断：一键切断物理流，强行删除凭证，重新全屏锁定！
                                 Application.getBackend().setState(target, Tunnel.State.DOWN, null)
                                 tm.delete(target)
                                 showActivationLockDialog()
-                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被注销！"
+                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被管理员注销！"
                             }
                         }
                     }
