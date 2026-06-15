@@ -5,6 +5,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -31,7 +32,6 @@ class MainActivity : AppCompatActivity() {
     private var guardJob: kotlinx.coroutines.Job? = null
     private var activationDialog: AlertDialog? = null
     
-    // 状态反馈文本指针
     private lateinit var statusFeedbackTv: TextView
     private lateinit var actionBtn: Button
 
@@ -47,11 +47,16 @@ class MainActivity : AppCompatActivity() {
     private fun showActivationLockDialog() {
         val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         
+        // 🌟 核心修复 1：最外层包裹一个标准的 ScrollView（滚动视图），确保键盘弹起时按钮永远不会被挤出屏幕外
+        val scrollView = ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
+        }
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
-            setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
-            setPadding(80, 80, 80, 80)
+            setPadding(80, 60, 80, 60)
         }
 
         val titleTv = TextView(this).apply {
@@ -68,16 +73,15 @@ class MainActivity : AppCompatActivity() {
             setTextColor(android.graphics.Color.parseColor("#94A3B8"))
             textSize = 14f
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, 40)
+            setPadding(0, 0, 0, 30)
         }
 
-        // 🌟 可视化反馈：新增一个专门用来看状态或报错的文本框，文字默认为空
         statusFeedbackTv = TextView(this).apply {
             text = ""
-            setTextColor(android.graphics.Color.parseColor("#EF4444")) // 红色报错提示
+            setTextColor(android.graphics.Color.parseColor("#EF4444"))
             textSize = 14f
             gravity = android.view.Gravity.CENTER
-            setPadding(0, 0, 0, 40)
+            setPadding(0, 0, 0, 30)
         }
 
         val etCode = EditText(this).apply {
@@ -101,14 +105,16 @@ class MainActivity : AppCompatActivity() {
 
         container.addView(titleTv)
         container.addView(subTv)
-        container.addView(statusFeedbackTv) // 挂载反馈栏
+        container.addView(statusFeedbackTv)
         container.addView(etCode)
         
-        val space = View(this).apply { minimumHeight = 40 }
+        val space = View(this).apply { minimumHeight = 60 }
         container.addView(space)
         container.addView(actionBtn)
 
-        builder.setView(container)
+        // 🌟 核心修复 2：将布局容器挂载到可滚动的 ScrollView 中
+        scrollView.addView(container)
+        builder.setView(scrollView)
         builder.setCancelable(false)
 
         activationDialog = builder.create()
@@ -119,7 +125,12 @@ class MainActivity : AppCompatActivity() {
             if (code.length < 5) {
                 statusFeedbackTv.text = "❌ 激活码格式不正确"
             } else {
-                // 按钮立刻变灰，并显示正在连接，给用户绝对明显的视觉反馈！
+                // 🌟 核心修复 3：点击按钮时，强制系统自动收起手机软键盘，让路给状态回显
+                try {
+                    val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    imm.hideSoftInputFromWindow(etCode.windowToken, 0)
+                } catch (e: Exception) {}
+
                 actionBtn.isEnabled = false
                 actionBtn.text = "⏳ 正在拼命连接边缘网关..."
                 statusFeedbackTv.text = "🔄 正在向 https://wx.8288.uk 握手寻址..."
@@ -146,7 +157,6 @@ class MainActivity : AppCompatActivity() {
                 val responseStr = response.body?.string()
 
                 withContext(Dispatchers.Main) {
-                    // 恢复按钮点击状态
                     actionBtn.isEnabled = true
                     actionBtn.text = "🚀 一键打通高强安防隧道"
 
@@ -167,7 +177,6 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     actionBtn.isEnabled = true
                     actionBtn.text = "🚀 一键打通高强安防隧道"
-                    // 🌟 终极核心：如果发生了任何证书链异常、网络掐断，直接在全屏屏幕中央红字打印出来！
                     statusFeedbackTv.text = "底层网络阻断报错: ${e.message}"
                 }
             }
