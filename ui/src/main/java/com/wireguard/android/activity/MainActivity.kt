@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val titleTv = TextView(this).apply {
-            text = "🛰️ 核心高强加密网络网关"
+            text = "🛰️ 核心加白通道"
             setTextColor(android.graphics.Color.WHITE)
             textSize = 22f
             paint.isFakeBoldText = true
@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val subTv = TextView(this).apply {
-            text = "此设备网络处于强力规管管控状态\n请粘贴管理员发给您的 12 位专属授权激活码"
+            text = "此设备网络处于加白状态\n请粘贴管理员发给您的 12 位专属授权密钥"
             setTextColor(android.graphics.Color.parseColor("#94A3B8"))
             textSize = 14f
             gravity = android.view.Gravity.CENTER
@@ -92,7 +92,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val etCode = EditText(this).apply {
-            hint = "请输入12位安全激活码 (Token)"
+            hint = "请输入12位安全密钥 (Token)"
             setHintTextColor(android.graphics.Color.GRAY)
             setTextColor(android.graphics.Color.parseColor("#38BDF8"))
             textSize = 16f
@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         actionBtn = Button(this).apply {
-            text = "🚀 一键打通高强安防隧道"
+            text = "🚀 登入加白通道"
             setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
             setTextColor(android.graphics.Color.WHITE)
             textSize = 16f
@@ -129,7 +129,7 @@ class MainActivity : AppCompatActivity() {
         actionBtn.setOnClickListener {
             val code = etCode.text.toString().trim()
             if (code.length < 5) {
-                statusFeedbackTv.text = "❌ 激活码格式不正确"
+                statusFeedbackTv.text = "❌ 密钥格式不正确"
             } else {
                 try {
                     val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
 
                 actionBtn.isEnabled = false
                 actionBtn.text = "⏳ 正在拼命连接边缘网关..."
-                statusFeedbackTv.text = "🔄 正在向 https://wx.8288.uk 握手寻址..."
+                statusFeedbackTv.text = "🔄 正在建立加白通道链接..."
                 executeCloudActivation(code)
             }
         }
@@ -163,7 +163,7 @@ class MainActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     actionBtn.isEnabled = true
-                    actionBtn.text = "🚀 一键打通高强安防隧道"
+                    actionBtn.text = "🚀 登入"
 
                     if (response.isSuccessful && responseStr != null) {
                         val rootJson = JsonParser.parseString(responseStr).asJsonObject
@@ -187,7 +187,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     actionBtn.isEnabled = true
-                    actionBtn.text = "🚀 一键打通高强安防隧道"
+                    actionBtn.text = "🚀 登入"
                     statusFeedbackTv.text = "底层网络阻断报错: ${e.message}"
                 }
             }
