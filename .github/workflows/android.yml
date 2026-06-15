@@ -7,7 +7,6 @@ on:
     branches: [ "master", "main" ]
   workflow_dispatch:
 
-# 🌟 强制加入全局环境变量，完美解决 Node.js 20 废弃警告，提前适配 2026 年新规
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -16,7 +15,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    # 🌟 核心：修改拉取代码步骤，加入 submodules: recursive，让云端服务器强制拉取底层 C/C++ 依赖文件
     - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
 
     - name: set up JDK 17
       uses: actions/setup-java@v4
@@ -28,6 +30,5 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    # 🌟 使用 assembleDebug 替代全局 build，只编译 APK，速度更快且能绕过原版的语法严苛测试
     - name: Build APK with Gradle
       run: ./gradlew assembleDebug
