@@ -1,5 +1,6 @@
-package com.wireguard.android.custom
+package com.wireguard.android.activity
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
@@ -9,7 +10,6 @@ import androidx.lifecycle.lifecycleScope
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.wireguard.android.Application
-import com.wireguard.android.R
 import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
 import kotlinx.coroutines.Dispatchers
@@ -29,12 +29,28 @@ class ActivationActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_activation) // 需准备带有 et_code 框与 btn_active 按钮的 XML
+        
+        // 🌟 动态构建极简纯黑 UI 容器，彻底免去配置各种 XML 布局资源导致的报错
+        val layout = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            setPadding(60, 100, 60, 60)
+            setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
+        }
+        val etCode = EditText(this).apply {
+            hint = "请输入12位安全激活码"
+            setHintTextColor(android.graphics.Color.GRAY)
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        val btnActive = Button(this).apply {
+            text = "🚀 一键接通加密网关"
+            setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
+            setTextColor(android.graphics.Color.WHITE)
+        }
+        layout.addView(etCode)
+        layout.addView(btnActive)
+        setContentView(layout)
 
         guardDaemon = VpnGuardDaemon(applicationContext)
-
-        val etCode = findViewById<EditText>(R.id.et_code)
-        val btnActive = findViewById<Button>(R.id.btn_active)
 
         btnActive.setOnClickListener {
             val code = etCode.text.toString().trim()
@@ -44,7 +60,7 @@ class ActivationActivity : AppCompatActivity() {
 
     private fun handleVpnActivation(activationCode: String) {
         if (activationCode.isBlank()) {
-            Toast.makeText(this, "请输入激活码", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "请输入有效激活码", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -77,7 +93,7 @@ class ActivationActivity : AppCompatActivity() {
                         showToast(rootJson.get("message").asString)
                     }
                 } else {
-                    showToast("激活验证失败，请检查激活码是否有效")
+                    showToast("激活验证失败，请检查激活码状态")
                 }
             } catch (e: Exception) {
                 showToast("连接边缘网关失败: ${e.message}")
@@ -86,29 +102,27 @@ class ActivationActivity : AppCompatActivity() {
     }
 
     private fun importAndConnect(configText: String, code: String) {
-        try {
-            val bufferedReader = BufferedReader(StringReader(configText))
-            val config = Config.parse(bufferedReader)
-            val tunnelManager = Application.getTunnelManager()
+        // 🌟 开启主线程协程作用域，解决直接调用 suspend 方法导致的编译中断
+        lifecycleScope.launch {
+            try {
+                val bufferedReader = BufferedReader(StringReader(configText))
+                val config = Config.parse(bufferedReader)
+                val tunnelManager = Application.getTunnelManager()
 
-            // 在系统全局注入一根默认隧道
-            tunnelManager.create("SecureTunnel", config).whenComplete { tunnel, throwable ->
-                if (throwable == null) {
-                    Toast.makeText(this, "🚀 激活成功！正在建立安全网络通道", Toast.LENGTH_SHORT).show()
-                    
-                    // 1. 全自动执行拉起开关逻辑
-                    tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
-                    
-                    // 2. 同步开启 30 秒存活轮询定时器
-                    guardDaemon.startGuard(code)
-                    
-                    finish()
-                } else {
-                    Toast.makeText(this, "隧道构建失败: ${throwable.message}", Toast.LENGTH_LONG).show()
-                }
+                // 异步注入并直接保存隧道
+                val tunnel = tunnelManager.create("SecureTunnel", config)
+                Toast.makeText(this@ActivationActivity, "授权通过！正在接通加密网络...", Toast.LENGTH_SHORT).show()
+                
+                // 开启物理 VPN 开关
+                tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
+                
+                // 激活心跳常驻
+                guardDaemon.startGuard(code)
+                
+                finish()
+            } catch (e: Exception) {
+                Toast.makeText(this@ActivationActivity, "构建安全隧道失败: ${e.message}", Toast.LENGTH_LONG).show()
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, "配置文件格式损坏", Toast.LENGTH_SHORT).show()
         }
     }
 
