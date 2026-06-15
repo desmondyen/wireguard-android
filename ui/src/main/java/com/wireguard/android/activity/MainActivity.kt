@@ -1,5 +1,8 @@
 package com.wireguard.android.activity
 
+import android.app.Activity
+import android.content.Intent
+import android.net.VpnService
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -34,22 +37,24 @@ class MainActivity : AppCompatActivity() {
     
     private lateinit var statusFeedbackTv: TextView
     private lateinit var actionBtn: Button
+    
+    // 缓存待注入的数据，用于在拿到系统 VPN 权限后继续执行
+    private var cachedConfigText: String = ""
+    private var cachedCode: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // 1. 让官方原版的底层布局正常渲染加载，确保系统初始化不闪退
         val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
         if (layoutId != 0) setContentView(layoutId)
 
-        // 2. 瞬间切入全屏高强商业规管锁定弹窗
+        // 稳稳拉起强制激活拦截大弹窗
         showActivationLockDialog()
     }
 
     private fun showActivationLockDialog() {
         val builder = AlertDialog.Builder(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         
-        // 🌟 防遮挡设计：最外层包裹滚动视图，键盘弹起时自动上推，确保按钮绝不丢失
         val scrollView = ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
@@ -78,7 +83,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 30)
         }
 
-        // 屏幕中央的可视化状态回显器
         statusFeedbackTv = TextView(this).apply {
             text = ""
             setTextColor(android.graphics.Color.parseColor("#EF4444"))
@@ -117,7 +121,7 @@ class MainActivity : AppCompatActivity() {
 
         scrollView.addView(container)
         builder.setView(scrollView)
-        builder.setCancelable(false) // 锁死强制拦截
+        builder.setCancelable(false)
 
         activationDialog = builder.create()
         activationDialog?.show()
@@ -127,7 +131,6 @@ class MainActivity : AppCompatActivity() {
             if (code.length < 5) {
                 statusFeedbackTv.text = "❌ 激活码格式不正确"
             } else {
-                // 点击时强制收起键盘，防止遮挡回显
                 try {
                     val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                     imm.hideSoftInputFromWindow(etCode.windowToken, 0)
@@ -150,7 +153,6 @@ class MainActivity : AppCompatActivity() {
                 val mediaType = "application/json; charset=utf-8".toMediaType()
                 val requestBody = jsonObject.toString().toRequestBody(mediaType)
 
-                // 🌟 使用合规的安全 https 加密链路请求
                 val request = Request.Builder()
                     .url("https://wx.8288.uk/api/v1/activate")
                     .post(requestBody)
@@ -169,8 +171,12 @@ class MainActivity : AppCompatActivity() {
                             val dataObj = rootJson.getAsJsonObject("data")
                             val wgConfigText = dataObj.get("config").asString
                             
-                            // 校验成功，执行本地装载
-                            injectTunnelAndUnlock(wgConfigText, activationCode)
+                            // 缓存通过验证的数据
+                            cachedConfigText = wgConfigText
+                            cachedCode = activationCode
+                            
+                            // 🌟 核心修改点 1：检查并主动申请系统的 VPN 物理授权拦截
+                            checkVpnPermissionAndConnect()
                         } else {
                             statusFeedbackTv.text = "服务端拒绝: " + rootJson.get("message").asString
                         }
@@ -188,14 +194,41 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun injectTunnelAndUnlock(configText: String, code: String) {
+    private fun checkVpnPermissionAndConnect() {
+        // 🌟 核心修改点 2：拉起 Android 系统原生的 VpnService 权限握手弹窗特赦令
+        val intent = VpnService.prepare(this)
+        if (intent != null) {
+            // 说明手机还没有给这个 App 授权过 VPN 权限，必须先拉起系统原生弹窗
+            statusFeedbackTv.text = "💡 请在系统弹出的提示框中点击“允许/确定”以授信加密网络"
+            startActivityForResult(intent, 518)
+        } else {
+            // 已经授权过了，直接顺畅连接
+            proceedFinalTunnelInjection()
+        }
+    }
+
+    // 🌟 核心修改点 3：专门捕获用户点击系统原生“确定”或“允许”按钮后的回调结果
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 518) {
+            if (resultCode == Activity.RESULT_OK) {
+                // 用户点击了允许，完美拿到物理特权，直接冲刺注入
+                statusFeedbackTv.text = "🟢 权限同步成功，正在打通网关..."
+                proceedFinalTunnelInjection()
+            } else {
+                // 用户拒绝了
+                statusFeedbackTv.text = "❌ 授权失败：必须允许 VPN 权限才能正常打通加密网络"
+            }
+        }
+    }
+
+    private fun proceedFinalTunnelInjection() {
         lifecycleScope.launch {
             try {
-                val bufferedReader = BufferedReader(StringReader(configText))
+                val bufferedReader = BufferedReader(StringReader(cachedConfigText))
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
-                // 🌟 核心去重清理：防止抛出“SecureTunnel已存在”的安卓底层冲突断言
                 val existingTunnels = tunnelManager.getTunnels()
                 val oldTunnel = existingTunnels.find { it.name == "SecureTunnel" }
                 if (oldTunnel != null) {
@@ -205,15 +238,11 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {}
                 }
 
-                // 注入全新下发的网关配置
+                // 此时有了完整的 VpnService 物理授信，创建绝对畅通无阻，再也不会报 null！
                 val tunnel = tunnelManager.create("SecureTunnel", config)
-                // 强制合上手机物理 VPN 开关
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
-                // 启动 30 秒断网守护心跳
-                startDaemonPoll(code)
-                
-                // 完美关闭拦截锁屏，允许用户使用
+                startDaemonPoll(cachedCode)
                 activationDialog?.dismiss()
             } catch (e: Exception) {
                 statusFeedbackTv.text = "构建本地隧道失败: ${e.message}"
@@ -225,7 +254,7 @@ class MainActivity : AppCompatActivity() {
         guardJob?.cancel()
         guardJob = lifecycleScope.launch(Dispatchers.IO) {
             while (true) {
-                kotlinx.coroutines.delay(30000) // 30秒无缝强管控
+                kotlinx.coroutines.delay(30000)
                 try {
                     val tm = Application.getTunnelManager()
                     val target = tm.getTunnels().find { it.name == "SecureTunnel" }
@@ -240,11 +269,10 @@ class MainActivity : AppCompatActivity() {
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
-                                // 💥 热熔断：一键切断物理流，强行删除凭证，重新全屏锁定！
                                 Application.getBackend().setState(target, Tunnel.State.DOWN, null)
                                 tm.delete(target)
                                 showActivationLockDialog()
-                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被管理员注销！"
+                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被注销！"
                             }
                         }
                     }
