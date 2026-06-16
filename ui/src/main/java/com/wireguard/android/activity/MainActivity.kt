@@ -1,6 +1,9 @@
 package com.wireguard.android.activity
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Bundle
@@ -102,6 +105,14 @@ class MainActivity : AppCompatActivity() {
             setPadding(30, 40, 30, 40)
         }
 
+        val btnCopyCode = Button(this).apply {
+            text = "📋 复制当前激活码"
+            setBackgroundColor(android.graphics.Color.parseColor("#475569"))
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 14f
+            paint.isFakeBoldText = true
+        }
+
         actionBtn = Button(this).apply {
             text = "🚀 登入加白通道"
             setBackgroundColor(android.graphics.Color.parseColor("#2563EB"))
@@ -115,7 +126,11 @@ class MainActivity : AppCompatActivity() {
         container.addView(statusFeedbackTv)
         container.addView(etCode)
         
-        val space = View(this).apply { minimumHeight = 60 }
+        val spaceBtn = View(this).apply { minimumHeight = 30 }
+        container.addView(spaceBtn)
+        container.addView(btnCopyCode)
+        
+        val space = View(this).apply { minimumHeight = 30 }
         container.addView(space)
         container.addView(actionBtn)
 
@@ -125,6 +140,22 @@ class MainActivity : AppCompatActivity() {
 
         activationDialog = builder.create()
         activationDialog?.show()
+
+        btnCopyCode.setOnClickListener {
+            val codeToCopy = etCode.text.toString().trim()
+            if (codeToCopy.isBlank()) {
+                Toast.makeText(this, "输入框为空，无安全密钥可复制", Toast.LENGTH_SHORT).show()
+            } else {
+                try {
+                    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = ClipData.newPlainText("Activation Code", codeToCopy)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(this, "✨ 密钥已成功复制到剪贴板！", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "复制失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
         actionBtn.setOnClickListener {
             val code = etCode.text.toString().trim()
@@ -163,7 +194,7 @@ class MainActivity : AppCompatActivity() {
 
                 withContext(Dispatchers.Main) {
                     actionBtn.isEnabled = true
-                    actionBtn.text = "🚀 登入"
+                    actionBtn.text = "🚀 登入加白通道"
 
                     if (response.isSuccessful && responseStr != null) {
                         val rootJson = JsonParser.parseString(responseStr).asJsonObject
@@ -171,11 +202,9 @@ class MainActivity : AppCompatActivity() {
                             val dataObj = rootJson.getAsJsonObject("data")
                             val wgConfigText = dataObj.get("config").asString
                             
-                            // 缓存通过验证的数据
                             cachedConfigText = wgConfigText
                             cachedCode = activationCode
                             
-                            // 🌟 核心修改点 1：检查并主动申请系统的 VPN 物理授权拦截
                             checkVpnPermissionAndConnect()
                         } else {
                             statusFeedbackTv.text = "服务端拒绝: " + rootJson.get("message").asString
@@ -187,7 +216,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     actionBtn.isEnabled = true
-                    actionBtn.text = "🚀 登入"
+                    actionBtn.text = "🚀 登入加白通道"
                     statusFeedbackTv.text = "底层网络阻断报错: ${e.message}"
                 }
             }
@@ -195,28 +224,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkVpnPermissionAndConnect() {
-        // 🌟 核心修改点 2：拉起 Android 系统原生的 VpnService 权限握手弹窗特赦令
         val intent = VpnService.prepare(this)
         if (intent != null) {
-            // 说明手机还没有给这个 App 授权过 VPN 权限，必须先拉起系统原生弹窗
             statusFeedbackTv.text = "💡 请在系统弹出的提示框中点击“允许/确定”以授信加密网络"
             startActivityForResult(intent, 518)
         } else {
-            // 已经授权过了，直接顺畅连接
             proceedFinalTunnelInjection()
         }
     }
 
-    // 🌟 核心修改点 3：专门捕获用户点击系统原生“确定”或“允许”按钮后的回调结果
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 518) {
             if (resultCode == Activity.RESULT_OK) {
-                // 用户点击了允许，完美拿到物理特权，直接冲刺注入
                 statusFeedbackTv.text = "🟢 权限同步成功，正在打通网关..."
                 proceedFinalTunnelInjection()
             } else {
-                // 用户拒绝了
                 statusFeedbackTv.text = "❌ 授权失败：必须允许 VPN 权限才能正常打通加密网络"
             }
         }
@@ -229,6 +252,7 @@ class MainActivity : AppCompatActivity() {
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
+                // 物理重名去重清理
                 val existingTunnels = tunnelManager.getTunnels()
                 val oldTunnel = existingTunnels.find { it.name == "SecureTunnel" }
                 if (oldTunnel != null) {
@@ -238,7 +262,6 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {}
                 }
 
-                // 此时有了完整的 VpnService 物理授信，创建绝对畅通无阻，再也不会报 null！
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
@@ -260,7 +283,7 @@ class MainActivity : AppCompatActivity() {
                     val target = tm.getTunnels().find { it.name == "SecureTunnel" }
                     
                     if (target != null) {
-                        val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
+                        val jsonObject = JsonObject().apply { url_for -> addProperty("activation_code", activationCode) }
                         val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                         
                         val request = Request.Builder().url("https://wx.8288.uk/api/v1/check_status").post(requestBody).build()
@@ -269,10 +292,22 @@ class MainActivity : AppCompatActivity() {
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
-                                Application.getBackend().setState(target, Tunnel.State.DOWN, null)
-                                tm.delete(target)
+                                // 🌟 终极物理热熔断擦除：先强行关闭网关流量，再彻底从手机底层卸载删除该 VPN 配置文件！
+                                try {
+                                    Application.getBackend().setState(target, Tunnel.State.DOWN, null)
+                                    tm.delete(target)
+                                } catch (e: Exception) {
+                                    // 保底擦除：即使状态切换发生阻断，也强制进行物理文件剔除
+                                    tm.delete(target)
+                                }
+
+                                // 内存数据骨架全面归零复位
+                                cachedConfigText = ""
+                                cachedCode = ""
+
+                                // 重新拉起全屏阻断弹窗，并更新红字警示状态
                                 showActivationLockDialog()
-                                statusFeedbackTv.text = "⚠️ 您的授权已到期或被注销！"
+                                statusFeedbackTv.text = "⚠️ 您的授权已到期，或已被管理员从云端物理注销断网！"
                             }
                         }
                     }
