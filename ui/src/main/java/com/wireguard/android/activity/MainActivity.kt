@@ -283,7 +283,8 @@ class MainActivity : AppCompatActivity() {
                     val target = tm.getTunnels().find { it.name == "SecureTunnel" }
                     
                     if (target != null) {
-                        val jsonObject = JsonObject().apply { url_for -> addProperty("activation_code", activationCode) }
+                        // 🌟 完美修复：删除了错误的 url_for lambda 声明，恢复标准属性注入结构
+                        val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
                         val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                         
                         val request = Request.Builder().url("https://wx.8288.uk/api/v1/check_status").post(requestBody).build()
@@ -292,20 +293,16 @@ class MainActivity : AppCompatActivity() {
 
                         if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                             withContext(Dispatchers.Main) {
-                                // 🌟 终极物理热熔断擦除：先强行关闭网关流量，再彻底从手机底层卸载删除该 VPN 配置文件！
                                 try {
                                     Application.getBackend().setState(target, Tunnel.State.DOWN, null)
                                     tm.delete(target)
                                 } catch (e: Exception) {
-                                    // 保底擦除：即使状态切换发生阻断，也强制进行物理文件剔除
                                     tm.delete(target)
                                 }
 
-                                // 内存数据骨架全面归零复位
                                 cachedConfigText = ""
                                 cachedCode = ""
 
-                                // 重新拉起全屏阻断弹窗，并更新红字警示状态
                                 showActivationLockDialog()
                                 statusFeedbackTv.text = "⚠️ 您的授权已到期，或已被管理员从云端物理注销断网！"
                             }
