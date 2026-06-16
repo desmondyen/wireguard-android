@@ -106,7 +106,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnCopyCode = Button(this).apply {
-            text = "📋 复制当前激活码"
+            text = "📋 复制当前密钥"
             setBackgroundColor(android.graphics.Color.parseColor("#475569"))
             setTextColor(android.graphics.Color.WHITE)
             textSize = 14f
@@ -304,7 +304,7 @@ class MainActivity : AppCompatActivity() {
                                 cachedCode = ""
 
                                 showActivationLockDialog()
-                                statusFeedbackTv.text = "⚠️ 您的授权已到期，或已被管理员从云端物理注销断网！"
+                                statusFeedbackTv.text = "⚠️ 您的授权已到期，或已被管理员物理注销断网！"
                             }
                         }
                     }
