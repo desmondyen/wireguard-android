@@ -48,7 +48,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusFeedbackTv: TextView
     private lateinit var actionBtn: Button
     
-    // 缓存待注入的数据，用于在拿到系统 VPN 权限后继续执行
     private var cachedConfigText: String = ""
     private var cachedCode: String = ""
 
@@ -58,7 +57,6 @@ class MainActivity : AppCompatActivity() {
         val layoutId = resources.getIdentifier("main_activity", "layout", packageName)
         if (layoutId != 0) setContentView(layoutId)
 
-        // 稳稳拉起强制激活拦截大弹窗
         showActivationLockDialog()
     }
 
@@ -259,7 +257,6 @@ class MainActivity : AppCompatActivity() {
                 val config = Config.parse(bufferedReader)
                 val tunnelManager = Application.getTunnelManager()
 
-                // 物理重名去重清理
                 val existingTunnels = tunnelManager.getTunnels()
                 val oldTunnel = existingTunnels.find { it.name == "SecureTunnel" }
                 if (oldTunnel != null) {
@@ -272,7 +269,6 @@ class MainActivity : AppCompatActivity() {
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
-                // 🌟 核心改动：调用系统级持久化守护任务
                 startPersistentDaemon(cachedCode)
                 activationDialog?.dismiss()
             } catch (e: Exception) {
@@ -281,20 +277,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 将过期轮询移交给系统 WorkManager 托管，应用退出、进程被杀依然能在后台定时触发
-     */
     private fun startPersistentDaemon(activationCode: String) {
         val inputData = Data.Builder()
             .putString("activation_code", activationCode)
             .build()
 
-        // 建立周期性后台任务（Android 规定 Periodic 最短周期为 15 分钟）
         val guardRequest = PeriodicWorkRequestBuilder<VpnGuardWorker>(15, TimeUnit.MINUTES)
             .setInputData(inputData)
             .build()
 
-        // 使用 KEEP 策略，保证任务全局唯一，多次调用不会重复创建
         WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
             "VpnTunnelGuardLock",
             ExistingPeriodicWorkPolicy.KEEP,
@@ -304,26 +295,26 @@ class MainActivity : AppCompatActivity() {
 }
 
 /**
- * 独立的系统后台守护 Worker，脱离 Activity 生命周期运行
+ * 修复重名与挂起域限制后的独立系统后台守护 Worker
  */
 class VpnGuardWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
 
     private val httpClient = OkHttpClient()
 
-    override fun doWork(): Result {
-        val activationCode = inputData.getString("activation_code") ?: return Result.failure()
+    override fun doWork(): val = runBlocking(Dispatchers.IO) {
+        val activationCode = inputData.getString("activation_code") 
+            ?: return@runBlocking androidx.work.ListenableWorker.Result.failure()
 
         try {
             val tm = Application.getTunnelManager()
+            // 解决挂起函数限制：将其放入具有协程作用域的 runBlocking 内执行
             val target = tm.getTunnels().find { it.name == "SecureTunnel" }
 
-            // 如果本地隧道已经被手动删除或不存在，本守护任务直接结束
             if (target == null) {
-                return Result.success()
+                return@runBlocking androidx.work.ListenableWorker.Result.success()
             }
 
-            // 同步向服务端校验状态
             val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
             val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
             
@@ -338,25 +329,20 @@ class VpnGuardWorker(context: Context, workerParams: WorkerParameters) :
             if (!response.isSuccessful || responseStr == null || 
                 JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
                 
-                // 判定到期：强行熔断并物理清理底层 VPN
-                runBlocking {
-                    try {
-                        Application.getBackend().setState(target, Tunnel.State.DOWN, null)
-                        tm.delete(target)
-                    } catch (e: Exception) {
-                        tm.delete(target)
-                    }
+                try {
+                    Application.getBackend().setState(target, Tunnel.State.DOWN, null)
+                    tm.delete(target)
+                } catch (e: Exception) {
+                    tm.delete(target)
                 }
-                // 执行成功后不再重试，彻底注销此定时器
-                return Result.success()
+                
+                return@runBlocking androidx.work.ListenableWorker.Result.success()
             }
 
-            // 未过期，等待下一个周期继续检查
-            return Result.retry()
+            return@runBlocking androidx.work.ListenableWorker.Result.retry()
         } catch (e: Exception) {
             e.printStackTrace()
-            // 因临时网络波动导致请求失败时，允许系统稍后进行重试
-            return Result.retry()
+            return@runBlocking androidx.work.ListenableWorker.Result.retry()
         }
     }
 }
