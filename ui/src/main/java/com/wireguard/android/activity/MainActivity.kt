@@ -269,6 +269,7 @@ class MainActivity : AppCompatActivity() {
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
+                // 启动永久型系统后台守护者
                 startPersistentDaemon(cachedCode)
                 activationDialog?.dismiss()
             } catch (e: Exception) {
@@ -295,7 +296,7 @@ class MainActivity : AppCompatActivity() {
 }
 
 /**
- * 独立的系统后台守护 Worker
+ * 独立的系统后台守护 Worker，100% 摆脱 UI 进程生命周期束缚
  */
 class VpnGuardWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
