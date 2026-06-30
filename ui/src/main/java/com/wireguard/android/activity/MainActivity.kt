@@ -17,6 +17,12 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.work.Data
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.Worker
+import androidx.work.WorkerParameters
+import androidx.work.WorkManager
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.wireguard.android.Application
@@ -24,6 +30,7 @@ import com.wireguard.android.backend.Tunnel
 import com.wireguard.config.Config
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -31,11 +38,11 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.io.StringReader
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
     private val httpClient = OkHttpClient()
-    private var guardJob: kotlinx.coroutines.Job? = null
     private var activationDialog: AlertDialog? = null
     
     private lateinit var statusFeedbackTv: TextView
@@ -163,7 +170,7 @@ class MainActivity : AppCompatActivity() {
                 statusFeedbackTv.text = "❌ 密钥格式不正确"
             } else {
                 try {
-                    val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                     imm.hideSoftInputFromWindow(etCode.windowToken, 0)
                 } catch (e: Exception) {}
 
@@ -265,7 +272,8 @@ class MainActivity : AppCompatActivity() {
                 val tunnel = tunnelManager.create("SecureTunnel", config)
                 tunnelManager.setTunnelState(tunnel, Tunnel.State.UP)
 
-                startDaemonPoll(cachedCode)
+                // 🌟 核心改动：调用系统级持久化守护任务
+                startPersistentDaemon(cachedCode)
                 activationDialog?.dismiss()
             } catch (e: Exception) {
                 statusFeedbackTv.text = "构建本地隧道失败: ${e.message}"
@@ -273,43 +281,82 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun startDaemonPoll(activationCode: String) {
-        guardJob?.cancel()
-        guardJob = lifecycleScope.launch(Dispatchers.IO) {
-            while (true) {
-                kotlinx.coroutines.delay(30000)
-                try {
-                    val tm = Application.getTunnelManager()
-                    val target = tm.getTunnels().find { it.name == "SecureTunnel" }
-                    
-                    if (target != null) {
-                        // 🌟 完美修复：删除了错误的 url_for lambda 声明，恢复标准属性注入结构
-                        val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
-                        val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
-                        
-                        val request = Request.Builder().url("https://wx.8288.uk/api/v1/check_status").post(requestBody).build()
-                        val response = httpClient.newCall(request).execute()
-                        val responseStr = response.body?.string()
+    /**
+     * 将过期轮询移交给系统 WorkManager 托管，应用退出、进程被杀依然能在后台定时触发
+     */
+    private fun startPersistentDaemon(activationCode: String) {
+        val inputData = Data.Builder()
+            .putString("activation_code", activationCode)
+            .build()
 
-                        if (!response.isSuccessful || responseStr == null || JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
-                            withContext(Dispatchers.Main) {
-                                try {
-                                    Application.getBackend().setState(target, Tunnel.State.DOWN, null)
-                                    tm.delete(target)
-                                } catch (e: Exception) {
-                                    tm.delete(target)
-                                }
+        // 建立周期性后台任务（Android 规定 Periodic 最短周期为 15 分钟）
+        val guardRequest = PeriodicWorkRequestBuilder<VpnGuardWorker>(15, TimeUnit.MINUTES)
+            .setInputData(inputData)
+            .build()
 
-                                cachedConfigText = ""
-                                cachedCode = ""
+        // 使用 KEEP 策略，保证任务全局唯一，多次调用不会重复创建
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            "VpnTunnelGuardLock",
+            ExistingPeriodicWorkPolicy.KEEP,
+            guardRequest
+        )
+    }
+}
 
-                                showActivationLockDialog()
-                                statusFeedbackTv.text = "⚠️ 您的授权已到期，或已被管理员物理注销断网！"
-                            }
-                        }
-                    }
-                } catch (e: Exception) { e.printStackTrace() }
+/**
+ * 独立的系统后台守护 Worker，脱离 Activity 生命周期运行
+ */
+class VpnGuardWorker(context: Context, workerParams: WorkerParameters) :
+    Worker(context, workerParams) {
+
+    private val httpClient = OkHttpClient()
+
+    override fun doWork(): Result {
+        val activationCode = inputData.getString("activation_code") ?: return Result.failure()
+
+        try {
+            val tm = Application.getTunnelManager()
+            val target = tm.getTunnels().find { it.name == "SecureTunnel" }
+
+            // 如果本地隧道已经被手动删除或不存在，本守护任务直接结束
+            if (target == null) {
+                return Result.success()
             }
+
+            // 同步向服务端校验状态
+            val jsonObject = JsonObject().apply { addProperty("activation_code", activationCode) }
+            val requestBody = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            
+            val request = Request.Builder()
+                .url("https://wx.8288.uk/api/v1/check_status")
+                .post(requestBody)
+                .build()
+                
+            val response = httpClient.newCall(request).execute()
+            val responseStr = response.body?.string()
+
+            if (!response.isSuccessful || responseStr == null || 
+                JsonParser.parseString(responseStr).asJsonObject.get("status").asString == "expired") {
+                
+                // 判定到期：强行熔断并物理清理底层 VPN
+                runBlocking {
+                    try {
+                        Application.getBackend().setState(target, Tunnel.State.DOWN, null)
+                        tm.delete(target)
+                    } catch (e: Exception) {
+                        tm.delete(target)
+                    }
+                }
+                // 执行成功后不再重试，彻底注销此定时器
+                return Result.success()
+            }
+
+            // 未过期，等待下一个周期继续检查
+            return Result.retry()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // 因临时网络波动导致请求失败时，允许系统稍后进行重试
+            return Result.retry()
         }
     }
 }
