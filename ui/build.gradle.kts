@@ -31,7 +31,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-           proguardFiles("proguard-android-optimize.txt")
+            proguardFiles("proguard-android-optimize.txt")
             packaging {
                 resources {
                     excludes += "DebugProbesKt.bin"
@@ -78,10 +78,11 @@ dependencies {
     coreLibraryDesugaring(libs.desugarJdkLibs)
 
     // =====================================================================
-    // 🌟 新增：为 UI 主模块精准注入远程 API 请求和 JSON 解析所必须的底层依赖库
+    // 🌟 注入远程 API 请求、JSON 解析以及系统后台常驻定时检测所必须的底层依赖库
     // =====================================================================
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.0") // ⬅️ 正式加入此行，彻底解决 'work' 报错
 }
 
 tasks.withType<JavaCompile>().configureEach {
