@@ -295,20 +295,19 @@ class MainActivity : AppCompatActivity() {
 }
 
 /**
- * 修复重名与挂起域限制后的独立系统后台守护 Worker
+ * 独立的系统后台守护 Worker
  */
 class VpnGuardWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
 
     private val httpClient = OkHttpClient()
 
-    override fun doWork(): val = runBlocking(Dispatchers.IO) {
+    override fun doWork(): androidx.work.ListenableWorker.Result = runBlocking(Dispatchers.IO) {
         val activationCode = inputData.getString("activation_code") 
             ?: return@runBlocking androidx.work.ListenableWorker.Result.failure()
 
         try {
             val tm = Application.getTunnelManager()
-            // 解决挂起函数限制：将其放入具有协程作用域的 runBlocking 内执行
             val target = tm.getTunnels().find { it.name == "SecureTunnel" }
 
             if (target == null) {
